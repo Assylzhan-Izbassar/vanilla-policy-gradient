@@ -1,8 +1,10 @@
 import torch
 import numpy as np
 from mlp import mlp
+from config import args
 import gymnasium as gym
 from torch.optim import Adam
+import matplotlib.pyplot as plt
 from torch.distributions.categorical import Categorical
 
 
@@ -16,6 +18,10 @@ def reward_to_go(rews, gamma=0.99):
 
 def train(env_name, hidden_size, lr, epochs, batch_size):
     env = gym.make(env_name)
+
+    # TRY NOT TO MODIFY: seeds
+    env.action_space.seed(args.seed)
+    env.observation_space.seed(args.seed)
 
     obs_dim = env.observation_space.shape[0]
     n_acts = env.action_space.n
@@ -39,6 +45,7 @@ def train(env_name, hidden_size, lr, epochs, batch_size):
     def compute_policy_loss(obs, act, weights):
         advantage = weights - value_net(obs).detach()
         # TODO: I should check without normalization.
+        # NOTE: The best results with normalization!
         advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
 
         logp = get_policy(obs).log_prob(act)
@@ -47,6 +54,7 @@ def train(env_name, hidden_size, lr, epochs, batch_size):
     # make a value loss function for vanilla policy gradient.
     def compute_value_loss(obs, weights):
         # TODO: I should check value_net(obs) shape. Why we take .squeeze(-1)?
+        # NOTE: We should .squeeze!
         return ((value_net(obs).squeeze(-1) - weights) ** 2).mean()
 
     # make policy optimizer
@@ -89,8 +97,13 @@ def train(env_name, hidden_size, lr, epochs, batch_size):
                 batch_rets.append(ep_ret)
                 batch_lens.append(ep_len)
 
+                # The weight for each logprob(a|s) is R(tau).
+                # NOTE: The best results with R(tau).
+                batch_weights += [ep_ret] * ep_len
+
                 # The weight for each logprob(a|s) is reward-to-go from t.
-                batch_weights += list(reward_to_go(ep_rews))
+                # NOTE: With gamma the agent showed not good results.
+                # batch_weights += list(reward_to_go(ep_rews))
 
                 # Reset episode-specific variables
                 obs, done, ep_rews = env.reset()[0], False, []
@@ -114,7 +127,7 @@ def train(env_name, hidden_size, lr, epochs, batch_size):
         policy_optimizer.step()
 
         # Take a several value gradient update step
-        for _ in range(5):
+        for _ in range(1):
             value_optimizer.zero_grad()
             batch_value_loss = compute_value_loss(
                 obs=torch.as_tensor(np.array(batch_obs), dtype=torch.float32),
@@ -125,6 +138,24 @@ def train(env_name, hidden_size, lr, epochs, batch_size):
 
         return batch_policy_loss, batch_value_loss, batch_rets, batch_lens
 
+    avg_returns = []
+
     for i in range(epochs):
         batch_policy_loss, batch_value_loss, batch_rets, batch_lens = train_one_epoch()
-        print(np.mean(batch_rets))
+        avg_batch_returns = np.mean(batch_rets)
+        print(f"{avg_batch_returns:.4f}")
+
+        avg_returns.append(avg_batch_returns)
+
+    def plot_diag(data, title, ylabel, xlabel="Epoch"):
+        plt.plot(data)
+        plt.title(title)
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
+        plt.show()
+
+    plot_diag(
+        data=avg_returns,
+        title="Ex10. Vanilla PG without norm, reward_to_go - with gamma, 1 training. Avg returns for epoch",
+        ylabel="Return",
+    )
